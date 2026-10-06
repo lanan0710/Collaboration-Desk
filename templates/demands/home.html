@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block title %}需求协作台首页{% endblock %}
+
+{% block content %}
+    <h1>小团队需求与验收协作台</h1>
+
+    <p>你好，{{ user.username }}！</p>
+
+    <p>你已经成功登录系统。</p>
+
+    <h2>当前进度</h2>
+
+    <ul>
+        <li>Python环境：完成</li>
+        <li>Django项目：完成</li>
+        <li>用户登录：完成</li>
+        <li>需求管理：下一步实现</li>
+    </ul>
+{% endblock %}

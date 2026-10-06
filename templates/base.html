@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>{% block title %}需求验收协作台{% endblock %}</title>
+
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, "Microsoft YaHei", sans-serif;
+            background: #f5f7fa;
+            color: #1f2937;
+        }
+
+        header {
+            background: #1f4b7a;
+            color: white;
+            padding: 16px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        header a {
+            color: white;
+            text-decoration: none;
+        }
+
+        main {
+            max-width: 900px;
+            margin: 30px auto;
+            background: white;
+            padding: 28px;
+            border-radius: 10px;
+            box-shadow: 0 3px 12px rgba(0, 0, 0, 0.08);
+        }
+
+        button {
+            padding: 8px 16px;
+            border: 0;
+            border-radius: 5px;
+            background: #2563eb;
+            color: white;
+            cursor: pointer;
+        }
+
+        input {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 9px;
+            margin: 6px 0 16px;
+        }
+
+        .logout-form {
+            display: inline;
+            margin-left: 16px;
+        }
+
+        .errorlist {
+            color: #b91c1c;
+        }
+
+        .message {
+            padding: 10px;
+            background: #dcfce7;
+            margin-bottom: 16px;
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <a href="/">
+            <strong>小团队需求与验收协作台</strong>
+        </a>
+
+        <div>
+            {% if user.is_authenticated %}
+                当前用户：{{ user.username }}
+
+                <form class="logout-form"
+                      method="post"
+                      action="{% url 'logout' %}">
+                    {% csrf_token %}
+                    <button type="submit">退出登录</button>
+                </form>
+            {% endif %}
+        </div>
+    </header>
+
+    <main>
+        {% if messages %}
+            {% for message in messages %}
+                <div class="message">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+
+        {% block content %}
+        {% endblock %}
+    </main>
+</body>
+</html>
