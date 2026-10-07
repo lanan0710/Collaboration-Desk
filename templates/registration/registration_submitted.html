@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+
+{% block title %}申请已提交{% endblock %}
+
+{% block content %}
+<section class="card auth-card">
+  <h1>注册申请已提交</h1>
+  <p>账号正在等待审批。普通成员可由业务管理员或超级管理员批准；业务管理员申请只能由超级管理员批准。</p>
+  <p><a href="{% url 'login' %}">返回登录页</a></p>
+</section>
+{% endblock %}

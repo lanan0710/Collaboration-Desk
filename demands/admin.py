@@ -7,6 +7,7 @@ from .models import (
     Review,
     ReviewResult,
     Submission,
+    SubmissionAttachment,
 )
 
 
@@ -40,6 +41,11 @@ class ImmutableHistoryAdmin(admin.ModelAdmin):
 class SubmissionAdmin(ImmutableHistoryAdmin):
     list_display = ("requirement", "version", "submitted_by", "created_at")
     list_filter = ("created_at",)
+
+
+@admin.register(SubmissionAttachment)
+class SubmissionAttachmentAdmin(ImmutableHistoryAdmin):
+    list_display = ("submission", "original_name", "size", "created_at")
 
 
 @admin.register(Review)

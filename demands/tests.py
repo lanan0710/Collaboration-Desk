@@ -3,8 +3,9 @@ import uuid
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.test import TestCase
+from django.urls import reverse
 
-from .models import Requirement, Review, Submission
+from .models import OperationLog, Requirement, Review, Submission
 from .services import (
     StaleRequirementError,
     create_requirement,
@@ -191,3 +192,230 @@ class RequirementWorkflowTests(TestCase):
         submission.description = "试图覆盖旧版本"
         with self.assertRaises(ValidationError):
             submission.save()
+
+
+class RequirementHomeViewTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.creator = user_model.objects.create_user(username="web-creator")
+        self.assignee = user_model.objects.create_user(
+            username="web-assignee",
+            email="assignee@example.com",
+        )
+        self.inactive_user = user_model.objects.create_user(
+            username="inactive-assignee",
+            is_active=False,
+        )
+        self.client.force_login(self.creator)
+
+    def home_payload(self, *, criteria=None, **overrides):
+        criteria = ["第一条验收条件"] if criteria is None else criteria
+        total_forms = max(1, len(criteria))
+        data = {
+            "title": "首页创建需求",
+            "description": "验证首页表单能够调用业务服务。",
+            "assignee": self.assignee.pk,
+            "criteria-TOTAL_FORMS": str(total_forms),
+            "criteria-INITIAL_FORMS": "0",
+            "criteria-MIN_NUM_FORMS": "1",
+            "criteria-MAX_NUM_FORMS": "20",
+        }
+        for index in range(total_forms):
+            data[f"criteria-{index}-content"] = (
+                criteria[index] if index < len(criteria) else ""
+            )
+        data.update(overrides)
+        return data
+
+    def test_anonymous_user_cannot_open_or_submit_home(self):
+        self.client.logout()
+
+        get_response = self.client.get(reverse("demands:home"))
+        post_response = self.client.post(
+            reverse("demands:home"),
+            self.home_payload(
+                title="匿名创建",
+                description="不应被创建。",
+                criteria=["不应被创建"],
+            ),
+        )
+
+        self.assertRedirects(
+            get_response,
+            f"{reverse('login')}?next={reverse('demands:home')}",
+        )
+        self.assertRedirects(
+            post_response,
+            f"{reverse('login')}?next={reverse('demands:home')}",
+        )
+        self.assertFalse(Requirement.objects.filter(title="匿名创建").exists())
+
+    def test_home_shows_create_form_with_only_eligible_assignees(self):
+        response = self.client.get(reverse("demands:home"))
+
+        self.assertEqual(response.status_code, 200)
+        queryset = response.context["form"].fields["assignee"].queryset
+        self.assertIn(self.assignee, queryset)
+        self.assertNotIn(self.creator, queryset)
+        self.assertNotIn(self.inactive_user, queryset)
+        self.assertContains(response, 'id="assignee-search"')
+        self.assertContains(response, "web-assignee（assignee@example.com）")
+        self.assertContains(response, 'id="criterion-form-list"')
+
+    def test_home_can_create_requirement_and_criteria(self):
+        response = self.client.post(
+            reverse("demands:home"),
+            self.home_payload(criteria=["第一条验收条件", "第二条验收条件"]),
+            follow=True,
+        )
+
+        self.assertRedirects(response, reverse("demands:home"))
+        requirement = Requirement.objects.get(title="首页创建需求")
+        self.assertEqual(requirement.creator, self.creator)
+        self.assertEqual(requirement.assignee, self.assignee)
+        self.assertEqual(
+            list(requirement.criteria.values_list("content", flat=True)),
+            ["第一条验收条件", "第二条验收条件"],
+        )
+        self.assertTrue(
+            OperationLog.objects.filter(requirement=requirement, action="create").exists()
+        )
+        self.assertContains(response, "需求“首页创建需求”已创建")
+
+    def test_home_rejects_empty_criteria(self):
+        response = self.client.post(
+            reverse("demands:home"),
+            self.home_payload(
+                criteria=[],
+                title="无验收条件",
+                description="该请求应被表单拒绝。",
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "至少需要填写一条验收条件")
+        self.assertFalse(Requirement.objects.filter(title="无验收条件").exists())
+
+    def test_home_rejects_assigning_requirement_to_creator(self):
+        response = self.client.post(
+            reverse("demands:home"),
+            self.home_payload(
+                title="错误负责人",
+                description="不能把自己指定为负责人。",
+                assignee=self.creator.pk,
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFormError(
+            response.context["form"],
+            "assignee",
+            "请选择一个有效的负责人。",
+        )
+        self.assertFalse(Requirement.objects.filter(title="错误负责人").exists())
+
+    def test_home_rejects_more_than_twenty_criteria(self):
+        response = self.client.post(
+            reverse("demands:home"),
+            self.home_payload(
+                criteria=[f"条件 {index}" for index in range(21)],
+                title="条件过多",
+                description="超过服务允许的最大数量。",
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "验收条件最多填写 20 条")
+        self.assertFalse(Requirement.objects.filter(title="条件过多").exists())
+
+    def test_home_links_related_requirements_to_detail_page(self):
+        requirement = create_requirement(
+            actor=self.creator,
+            assignee=self.assignee,
+            title="可点击的需求",
+            description="首页应提供详情链接。",
+            criterion_texts=["能够进入详情页"],
+        )
+
+        response = self.client.get(reverse("demands:home"))
+
+        self.assertContains(
+            response,
+            reverse("demands:requirement_detail", args=[requirement.pk]),
+        )
+
+
+class RequirementDetailViewTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.creator = user_model.objects.create_user(username="detail-creator")
+        self.assignee = user_model.objects.create_user(username="detail-assignee")
+        self.outsider = user_model.objects.create_user(username="detail-outsider")
+        self.requirement = create_requirement(
+            actor=self.creator,
+            assignee=self.assignee,
+            title="详情页需求",
+            description="只有相关用户能够查看。",
+            criterion_texts=["展示第一项", "展示第二项"],
+        )
+
+    def detail_url(self):
+        return reverse("demands:requirement_detail", args=[self.requirement.pk])
+
+    def test_creator_and_assignee_can_view_detail(self):
+        for user in (self.creator, self.assignee):
+            self.client.force_login(user)
+            response = self.client.get(self.detail_url())
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, "详情页需求")
+            self.assertContains(response, "展示第一项")
+            self.assertContains(response, "展示第二项")
+
+    def test_outsider_receives_not_found_for_detail(self):
+        self.client.force_login(self.outsider)
+
+        response = self.client.get(self.detail_url())
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_detail_displays_submission_and_each_review_result(self):
+        started = start_requirement(
+            requirement_id=self.requirement.pk,
+            actor=self.assignee,
+            expected_lock_version=self.requirement.lock_version,
+        )
+        submission = submit_result(
+            requirement_id=self.requirement.pk,
+            actor=self.assignee,
+            expected_lock_version=started.lock_version,
+            result_url="https://example.com/detail-v1",
+            description="详情页第一版成果",
+            idempotency_key=uuid.uuid4(),
+        )
+        self.client.force_login(self.creator)
+
+        pending_review_response = self.client.get(self.detail_url())
+        self.assertContains(pending_review_response, "V1")
+        self.assertContains(pending_review_response, "该版本尚未验收")
+
+        self.requirement.refresh_from_db()
+        criteria = list(self.requirement.criteria.all())
+        review_submission(
+            requirement_id=self.requirement.pk,
+            submission_id=submission.pk,
+            actor=self.creator,
+            expected_lock_version=self.requirement.lock_version,
+            decision=Review.Decision.RETURNED,
+            results={
+                criteria[0].pk: {"passed": True, "comment": ""},
+                criteria[1].pk: {"passed": False, "comment": "需要补充测试。"},
+            },
+            return_reason="第二项尚未达到要求。",
+            idempotency_key=uuid.uuid4(),
+        )
+
+        reviewed_response = self.client.get(self.detail_url())
+        self.assertContains(reviewed_response, "第二项尚未达到要求")
+        self.assertContains(reviewed_response, "展示第一项")
+        self.assertContains(reviewed_response, "展示第二项")
+        self.assertContains(reviewed_response, "需要补充测试")

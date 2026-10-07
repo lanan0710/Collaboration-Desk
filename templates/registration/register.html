@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block title %}注册账号{% endblock %}
+
+{% block content %}
+<section class="card auth-card">
+  <h1>注册账号</h1>
+  <p class="muted">提交后账号暂不可登录，需管理员审批。你可以同时申请业务管理员权限。</p>
+
+  <form method="post">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    {% for field in form %}
+      <div class="form-row">
+        {{ field.label_tag }}
+        {{ field }}
+        {% if field.help_text %}<small class="muted">{{ field.help_text|safe }}</small>{% endif %}
+        {{ field.errors }}
+      </div>
+    {% endfor %}
+    <button type="submit">提交注册申请</button>
+  </form>
+
+  <p><a href="{% url 'login' %}">已有账号？返回登录</a></p>
+</section>
+{% endblock %}

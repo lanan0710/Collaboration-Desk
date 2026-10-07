@@ -1,7 +1,9 @@
+from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.db.models import Max
 
+from .attachment_rules import attachment_original_name, validate_submission_materials
 from .models import (
     AcceptanceCriterion,
     OperationLog,
@@ -9,6 +11,7 @@ from .models import (
     Review,
     ReviewResult,
     Submission,
+    SubmissionAttachment,
 )
 
 
@@ -17,9 +20,18 @@ class StaleRequirementError(ValidationError):
 
 
 def _clean_criterion_texts(criterion_texts):
-    cleaned = [str(item).strip() for item in criterion_texts if str(item).strip()]
+    if not isinstance(criterion_texts, (list, tuple)):
+        raise ValidationError("验收条件必须以列表形式提交。")
+    if any(not isinstance(item, str) for item in criterion_texts):
+        raise ValidationError("每条验收条件都必须是文本。")
+
+    cleaned = [item.strip() for item in criterion_texts if item.strip()]
     if not cleaned:
         raise ValidationError("至少需要一条验收条件。")
+    if len(cleaned) > 20:
+        raise ValidationError("验收条件最多填写 20 条。")
+    if any(len(item) > 500 for item in cleaned):
+        raise ValidationError("每条验收条件不能超过 500 个字符。")
     return cleaned
 
 
@@ -43,6 +55,18 @@ def _advance(requirement, target_status):
 
 @transaction.atomic
 def create_requirement(*, actor, assignee, title, description, criterion_texts):
+    if not actor.is_authenticated or not actor.is_active:
+        raise PermissionDenied("只有已激活的登录用户可以创建需求。")
+
+    user_model = get_user_model()
+    try:
+        assignee = user_model.objects.select_for_update().get(
+            pk=assignee.pk,
+            is_active=True,
+        )
+    except (AttributeError, user_model.DoesNotExist) as exc:
+        raise ValidationError("负责人必须是已激活用户。") from exc
+
     criteria = _clean_criterion_texts(criterion_texts)
     requirement = Requirement(
         title=title.strip(),
@@ -158,19 +182,43 @@ def submit_result(
     result_url,
     description,
     idempotency_key,
+    uploaded_files=(),
 ):
     requirement = _lock_requirement(requirement_id)
+    if requirement.assignee_id != actor.id:
+        raise PermissionDenied("只有需求负责人可以提交成果。")
 
-    existing = Submission.objects.filter(
-        requirement=requirement,
-        idempotency_key=idempotency_key,
-    ).first()
+    result_url, uploaded_files = validate_submission_materials(
+        result_url,
+        uploaded_files,
+    )
+    description = description.strip()
+
+    existing = (
+        Submission.objects.select_related("requirement", "submitted_by")
+        .prefetch_related("attachments")
+        .filter(idempotency_key=idempotency_key)
+        .first()
+    )
     if existing:
+        requested_files = [
+            (attachment_original_name(uploaded_file), uploaded_file.size)
+            for uploaded_file in uploaded_files
+        ]
+        existing_files = list(
+            existing.attachments.values_list("original_name", "size")
+        )
+        if (
+            existing.requirement_id != requirement.id
+            or existing.submitted_by_id != actor.id
+            or existing.result_url != result_url
+            or existing.description != description
+            or existing_files != requested_files
+        ):
+            raise ValidationError("幂等请求标识与原成果提交内容不匹配。")
         return existing
 
     _check_version(requirement, expected_lock_version)
-    if requirement.assignee_id != actor.id:
-        raise PermissionDenied("只有需求负责人可以提交成果。")
     if requirement.status != Requirement.Status.IN_PROGRESS:
         raise ValidationError("只有进行中的需求可以提交成果。")
 
@@ -180,24 +228,60 @@ def submit_result(
     submission = Submission(
         requirement=requirement,
         version=latest_version + 1,
-        result_url=result_url.strip(),
-        description=description.strip(),
+        result_url=result_url,
+        description=description,
         submitted_by=actor,
         idempotency_key=idempotency_key,
     )
     submission.full_clean()
-    submission.save()
+    stored_files = []
+    pending_attachment = None
+    try:
+        submission.save()
+        for uploaded_file in uploaded_files:
+            pending_attachment = SubmissionAttachment(
+                submission=submission,
+                file=uploaded_file,
+                original_name=attachment_original_name(uploaded_file),
+                size=uploaded_file.size,
+            )
+            pending_attachment.full_clean()
+            pending_attachment.save()
+            stored_files.append(
+                (pending_attachment.file.storage, pending_attachment.file.name)
+            )
+            pending_attachment = None
 
-    _advance(requirement, Requirement.Status.IN_REVIEW)
-    OperationLog.objects.create(
-        requirement=requirement,
-        actor=actor,
-        submission=submission,
-        action="submit",
-        from_status=Requirement.Status.IN_PROGRESS,
-        to_status=Requirement.Status.IN_REVIEW,
-        description=f"提交成果 V{submission.version}。",
-    )
+        _advance(requirement, Requirement.Status.IN_REVIEW)
+        OperationLog.objects.create(
+            requirement=requirement,
+            actor=actor,
+            submission=submission,
+            action="submit",
+            from_status=Requirement.Status.IN_PROGRESS,
+            to_status=Requirement.Status.IN_REVIEW,
+            description=f"提交成果 V{submission.version}。",
+            metadata={
+                "attachment_count": len(uploaded_files),
+                "has_result_url": bool(result_url),
+            },
+        )
+    except Exception:
+        cleanup_targets = list(stored_files)
+        if (
+            pending_attachment is not None
+            and pending_attachment.file
+            and pending_attachment.file._committed
+        ):
+            cleanup_targets.append(
+                (pending_attachment.file.storage, pending_attachment.file.name)
+            )
+        for storage, stored_name in cleanup_targets:
+            try:
+                storage.delete(stored_name)
+            except Exception:
+                pass
+        raise
     return submission
 
 

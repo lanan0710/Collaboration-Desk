@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+
+{% block title %}{{ requirement.title }} · 需求详情{% endblock %}
+
+{% block content %}
+<div class="page-heading">
+    <div>
+        <p><a href="{% url 'demands:home' %}">← 返回需求协作台</a></p>
+        <h1>
+            {{ requirement.title }}
+            <span class="status status-{{ requirement.status }}">{{ requirement.get_status_display }}</span>
+        </h1>
+        <p class="muted">
+            提出者：{{ requirement.creator.username }} ·
+            负责人：{{ requirement.assignee.username }} ·
+            创建于 {{ requirement.created_at|date:"Y-m-d H:i" }} ·
+            更新于 {{ requirement.updated_at|date:"Y-m-d H:i" }}
+        </p>
+    </div>
+</div>
+
+<section class="card action-panel workflow-phase-{{ requirement.workflow_phase_for_ui }}">
+    <h2>当前进度</h2>
+    <p class="workflow-hint">{{ action_hint }}</p>
+
+    {% if can_start %}
+        <form method="post" action="{% url 'demands:requirement_start' requirement.pk %}">
+            {% csrf_token %}
+            {{ start_form.lock_version }}
+            {{ start_form.lock_version.errors }}
+            <button type="submit">开始处理</button>
+        </form>
+    {% elif can_submit %}
+        <h3>
+            {% if requirement.workflow_phase_for_ui == "returned" %}
+                修改后重新提交成果
+            {% else %}
+                提交成果
+            {% endif %}
+        </h3>
+        <form method="post" action="{% url 'demands:requirement_submit' requirement.pk %}" enctype="multipart/form-data" novalidate>
+            {% csrf_token %}
+            {{ submission_form.non_field_errors }}
+            {{ submission_form.lock_version }}
+            {{ submission_form.idempotency_key }}
+            {{ submission_form.lock_version.errors }}
+            {{ submission_form.idempotency_key.errors }}
+
+            <div class="form-row">
+                {{ submission_form.result_url.label_tag }}
+                {{ submission_form.result_url }}
+                {{ submission_form.result_url.errors }}
+            </div>
+            <div class="form-row">
+                {{ submission_form.attachments.label_tag }}
+                {{ submission_form.attachments }}
+                {% if submission_form.attachments.help_text %}
+                    <small class="muted">{{ submission_form.attachments.help_text }}</small>
+                {% endif %}
+                {{ submission_form.attachments.errors }}
+            </div>
+            <div class="form-row">
+                {{ submission_form.description.label_tag }}
+                {{ submission_form.description }}
+                {{ submission_form.description.errors }}
+            </div>
+            <button type="submit">
+                {% if requirement.workflow_phase_for_ui == "returned" %}提交新版本{% else %}提交成果{% endif %}
+            </button>
+        </form>
+    {% elif can_review %}
+        <h3>逐项验收 V{{ requirement.latest_submission_for_ui.version }}</h3>
+        <form method="post" action="{% url 'demands:requirement_review' requirement.pk %}" novalidate>
+            {% csrf_token %}
+            {{ review_form.non_field_errors }}
+            {{ review_form.lock_version }}
+            {{ review_form.submission_id }}
+            {{ review_form.idempotency_key }}
+            {{ review_form.lock_version.errors }}
+            {{ review_form.submission_id.errors }}
+            {{ review_form.idempotency_key.errors }}
+
+            {{ review_formset.management_form }}
+            {{ review_formset.non_form_errors }}
+            {% for item_form in review_formset %}
+                <div class="review-criterion">
+                    {{ item_form.criterion_id }}
+                    {{ item_form.criterion_id.errors }}
+                    <strong>{{ forloop.counter }}. {{ item_form.criterion_text.value }}</strong>
+                    <div class="form-row review-choice">
+                        {{ item_form.passed.label_tag }}
+                        {{ item_form.passed }}
+                        {{ item_form.passed.errors }}
+                    </div>
+                    <div class="form-row">
+                        {{ item_form.comment.label_tag }}
+                        {{ item_form.comment }}
+                        {{ item_form.comment.errors }}
+                    </div>
+                </div>
+            {% endfor %}
+
+            <div class="form-row review-choice">
+                {{ review_form.decision.label_tag }}
+                {{ review_form.decision }}
+                {{ review_form.decision.errors }}
+            </div>
+            <div class="form-row">
+                {{ review_form.return_reason.label_tag }}
+                {{ review_form.return_reason }}
+                {{ review_form.return_reason.errors }}
+            </div>
+            <button type="submit">提交验收结论</button>
+        </form>
+    {% endif %}
+</section>
+
+<section class="card requirement-overview">
+    <h2>需求说明</h2>
+    <div>{{ requirement.description|linebreaksbr }}</div>
+</section>
+
+<section class="card acceptance-criteria">
+    <h2>验收条件</h2>
+    <ol>
+        {% for criterion in requirement.criteria.all %}
+            <li class="requirement-item">{{ criterion.content }}</li>
+        {% empty %}
+            <li class="muted">暂无验收条件。</li>
+        {% endfor %}
+    </ol>
+</section>
+
+<section class="card submission-history">
+    <h2>成果提交历史</h2>
+    {% for submission in requirement.submissions.all %}
+        <article class="requirement-item submission-item">
+            <h3>V{{ submission.version }}</h3>
+            {% if submission.result_url %}
+                <p>
+                    成果链接：
+                    <a href="{{ submission.result_url }}" target="_blank" rel="noopener noreferrer">
+                        {{ submission.result_url }}
+                    </a>
+                </p>
+            {% endif %}
+            {% if submission.attachments.all %}
+                <div class="submission-attachments">
+                    <strong>成果附件：</strong>
+                    <ul>
+                        {% for attachment in submission.attachments.all %}
+                            <li>
+                                <a href="{% url 'demands:attachment_download' attachment.pk %}">
+                                    {{ attachment.original_name }}
+                                </a>
+                                <span class="muted">（{{ attachment.size|filesizeformat }}）</span>
+                            </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% endif %}
+            <div>{{ submission.description|linebreaksbr }}</div>
+            <p class="muted">
+                提交者：{{ submission.submitted_by.username }} ·
+                提交于 {{ submission.created_at|date:"Y-m-d H:i" }}
+            </p>
+
+            {% with review=submission.review %}
+                {% if review %}
+                    <div class="submission-review">
+                        <h4>
+                            验收结论：{{ review.get_decision_display }}
+                            <span class="status status-{{ review.decision }}">{{ review.get_decision_display }}</span>
+                        </h4>
+                        <p class="muted">
+                            审核人：{{ review.reviewer.username }} ·
+                            审核于 {{ review.created_at|date:"Y-m-d H:i" }}
+                        </p>
+                        {% if review.return_reason %}
+                            <p><strong>退回原因：</strong>{{ review.return_reason|linebreaksbr }}</p>
+                        {% endif %}
+
+                        <h5>逐项验收结果</h5>
+                        <ol>
+                            {% for result in review.results.all %}
+                                <li class="review-result">
+                                    <strong>{{ result.criterion.content }}</strong>
+                                    — {% if result.passed %}通过{% else %}未通过{% endif %}
+                                    {% if result.comment %}
+                                        <div class="muted">检查说明：{{ result.comment|linebreaksbr }}</div>
+                                    {% endif %}
+                                </li>
+                            {% empty %}
+                                <li class="muted">暂无逐项验收结果。</li>
+                            {% endfor %}
+                        </ol>
+                    </div>
+                {% else %}
+                    <p class="muted">该版本尚未验收。</p>
+                {% endif %}
+            {% endwith %}
+        </article>
+    {% empty %}
+        <p class="muted">尚未提交任何成果。</p>
+    {% endfor %}
+</section>
+
+<section class="card operation-timeline">
+    <h2>操作时间线</h2>
+    <ol>
+        {% for log in requirement.logs.all %}
+            <li class="requirement-item operation-log">
+                <div>
+                    <strong>{{ log.action }}</strong>
+                    {% if log.from_status or log.to_status %}
+                        <span class="status">{{ log.from_status|default:"—" }} → {{ log.to_status|default:"—" }}</span>
+                    {% endif %}
+                </div>
+                <p class="muted">
+                    {{ log.actor.username }} · {{ log.created_at|date:"Y-m-d H:i" }}
+                    {% if log.submission %} · 相关提交 V{{ log.submission.version }}{% endif %}
+                </p>
+                {% if log.description %}
+                    <div>{{ log.description|linebreaksbr }}</div>
+                {% endif %}
+            </li>
+        {% empty %}
+            <li class="muted">暂无操作记录。</li>
+        {% endfor %}
+    </ol>
+</section>
+{% endblock %}

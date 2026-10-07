@@ -29,10 +29,15 @@
         }
 
         main {
-            max-width: 900px;
+            max-width: 1100px;
             margin: 30px auto;
+            padding: 0 20px 30px;
+        }
+
+        .card {
             background: white;
-            padding: 28px;
+            padding: 24px;
+            margin-bottom: 22px;
             border-radius: 10px;
             box-shadow: 0 3px 12px rgba(0, 0, 0, 0.08);
         }
@@ -46,11 +51,175 @@
             cursor: pointer;
         }
 
-        input {
+        input, textarea, select {
             width: 100%;
             box-sizing: border-box;
             padding: 9px;
             margin: 6px 0 16px;
+        }
+
+        input[type="checkbox"], input[type="radio"] {
+            width: auto;
+            margin-right: 8px;
+        }
+
+        .form-row {
+            margin-bottom: 14px;
+        }
+
+        .form-row label {
+            display: block;
+            font-weight: 600;
+        }
+
+        .muted {
+            color: #64748b;
+        }
+
+        .requirement-columns {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 22px;
+        }
+
+        .requirement-item {
+            padding: 14px 0;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .requirement-item:last-child {
+            border-bottom: 0;
+        }
+
+        .requirement-item p {
+            margin-bottom: 0;
+        }
+
+        .requirement-link {
+            color: inherit;
+            text-decoration: none;
+        }
+
+        .requirement-link .requirement-item {
+            border-radius: 8px;
+            transition: background 0.15s ease, transform 0.15s ease;
+        }
+
+        .requirement-link:hover .requirement-item,
+        .requirement-link:focus .requirement-item {
+            background: #f8fafc;
+            transform: translateX(3px);
+        }
+
+        .criteria-fieldset {
+            margin: 0 0 22px;
+            padding: 18px;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+        }
+
+        .criteria-fieldset legend {
+            padding: 0 8px;
+            font-weight: 700;
+        }
+
+        .criterion-row {
+            margin-bottom: 12px;
+            padding: 14px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            background: #f8fafc;
+        }
+
+        .criterion-row-heading {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+
+        button.button-secondary {
+            margin-bottom: 16px;
+            background: #475569;
+        }
+
+        button.button-danger {
+            padding: 5px 10px;
+            background: #b91c1c;
+        }
+
+        button:disabled {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+
+        .status {
+            display: inline-block;
+            margin-left: 8px;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: #e2e8f0;
+            color: #334155;
+            font-size: 12px;
+        }
+
+        .status-in_progress { background: #dbeafe; color: #1d4ed8; }
+        .status-in_review { background: #fef3c7; color: #92400e; }
+        .status-completed { background: #dcfce7; color: #166534; }
+
+        .workflow-phase {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .workflow-phase-waiting { background: #e2e8f0; color: #334155; }
+        .workflow-phase-processing { background: #dbeafe; color: #1d4ed8; }
+        .workflow-phase-reviewing { background: #fef3c7; color: #92400e; }
+        .workflow-phase-returned { background: #fee2e2; color: #b91c1c; }
+        .workflow-phase-completed { background: #dcfce7; color: #166534; }
+
+        .workflow-hint {
+            margin: 8px 0 0;
+            color: #475569;
+            font-weight: 600;
+        }
+
+        .action-panel {
+            border-left: 5px solid #94a3b8;
+        }
+
+        .action-panel.workflow-phase-processing { border-left-color: #2563eb; }
+        .action-panel.workflow-phase-reviewing { border-left-color: #d97706; }
+        .action-panel.workflow-phase-returned { border-left-color: #dc2626; }
+        .action-panel.workflow-phase-completed { border-left-color: #16a34a; }
+
+        .review-criterion {
+            margin: 14px 0;
+            padding: 16px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            background: #f8fafc;
+        }
+
+        .review-choice ul {
+            display: flex;
+            gap: 20px;
+            padding: 0;
+            list-style: none;
+        }
+
+        @media (max-width: 760px) {
+            .requirement-columns {
+                grid-template-columns: 1fr;
+            }
+
+            header {
+                padding: 14px 18px;
+            }
         }
 
         .logout-form {
@@ -100,5 +269,6 @@
         {% block content %}
         {% endblock %}
     </main>
+    {% block extra_js %}{% endblock %}
 </body>
 </html>

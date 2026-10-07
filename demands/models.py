@@ -1,8 +1,26 @@
 import uuid
 
 from django.conf import settings
-from django.core.exceptions import ValidationError
+from django.core.exceptions import SuspiciousFileOperation, ValidationError
 from django.db import models
+from django.utils.text import get_valid_filename
+
+
+def submission_attachment_upload_to(instance, filename):
+    """为成果附件生成不可预测且不包含用户目录信息的存储路径。"""
+
+    original_name = str(filename).replace("\\", "/").rsplit("/", 1)[-1]
+    try:
+        safe_name = get_valid_filename(original_name)
+    except SuspiciousFileOperation:
+        safe_name = "attachment"
+    safe_name = safe_name[-180:] or "attachment"
+    stored_name = f"{uuid.uuid4().hex}_{safe_name}"
+    submission = instance.submission
+    return (
+        f"submissions/requirement_{submission.requirement_id}/"
+        f"v{submission.version}/{stored_name}"
+    )
 
 
 class RequirementQuerySet(models.QuerySet):
@@ -104,7 +122,7 @@ class Submission(models.Model):
         verbose_name="所属需求",
     )
     version = models.PositiveIntegerField("提交版本")
-    result_url = models.URLField("成果链接", max_length=1000)
+    result_url = models.URLField("成果链接", max_length=1000, blank=True)
     description = models.TextField("完成说明")
     submitted_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -155,6 +173,41 @@ class Submission(models.Model):
 
     def __str__(self):
         return f"{self.requirement} · V{self.version}"
+
+
+class SubmissionAttachment(models.Model):
+    """成果提交中的不可变附件。"""
+
+    submission = models.ForeignKey(
+        Submission,
+        on_delete=models.PROTECT,
+        related_name="attachments",
+        verbose_name="所属提交",
+    )
+    file = models.FileField(
+        "附件文件",
+        upload_to=submission_attachment_upload_to,
+        max_length=500,
+    )
+    original_name = models.CharField("原始文件名", max_length=255)
+    size = models.PositiveBigIntegerField("文件大小（字节）")
+    created_at = models.DateTimeField("上传时间", auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+        verbose_name = "成果附件"
+        verbose_name_plural = "成果附件"
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk).exists():
+            raise ValidationError("历史附件不可修改，请随新的提交版本上传附件。")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("历史附件不可删除。")
+
+    def __str__(self):
+        return f"{self.submission} · {self.original_name}"
 
 
 class Review(models.Model):
