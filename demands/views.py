@@ -11,6 +11,7 @@ from django.views.decorators.http import require_POST
 from .forms import (
     CriterionFormSet,
     RequirementCreateForm,
+    RequirementEditForm,
     ReviewCriterionFormSet,
     ReviewDecisionForm,
     StartRequirementForm,
@@ -20,6 +21,7 @@ from .models import OperationLog, Requirement, Review, SubmissionAttachment
 from .presentation import decorate_requirement, user_action_hint
 from .services import (
     create_requirement,
+    edit_requirement,
     review_submission,
     start_requirement,
     submit_result,
@@ -63,6 +65,8 @@ def _detail_context(
     submission_form=None,
     review_form=None,
     review_formset=None,
+    edit_form=None,
+    edit_criterion_formset=None,
 ):
     decorate_requirement(requirement)
     can_start = (
@@ -78,6 +82,28 @@ def _detail_context(
         and requirement.status == Requirement.Status.IN_REVIEW
         and requirement.latest_submission_for_ui is not None
     )
+    can_edit = (
+        requirement.creator_id == user.id
+        and requirement.status == Requirement.Status.PENDING
+    )
+
+    if can_edit:
+        if edit_form is None:
+            edit_form = RequirementEditForm(
+                initial={
+                    "title": requirement.title,
+                    "description": requirement.description,
+                    "lock_version": requirement.lock_version,
+                }
+            )
+        if edit_criterion_formset is None:
+            edit_criterion_formset = CriterionFormSet(
+                initial=[
+                    {"content": criterion.content}
+                    for criterion in requirement.criteria.all()
+                ],
+                prefix="edit_criteria",
+            )
 
     if can_start and start_form is None:
         start_form = StartRequirementForm(
@@ -113,10 +139,13 @@ def _detail_context(
         "can_start": can_start,
         "can_submit": can_submit,
         "can_review": can_review,
+        "can_edit": can_edit,
         "start_form": start_form,
         "submission_form": submission_form,
         "review_form": review_form,
         "review_formset": review_formset,
+        "edit_form": edit_form,
+        "edit_criterion_formset": edit_criterion_formset,
     }
 
 
@@ -149,8 +178,27 @@ def home(request):
         form = RequirementCreateForm(actor=request.user)
         criterion_formset = CriterionFormSet(prefix="criteria")
 
+    status_filter = request.GET.get("status", "").strip()
+    role_filter = request.GET.get("role", "all").strip()
+    title_query = request.GET.get("q", "").strip()
+    valid_statuses = {value for value, _ in Requirement.Status.choices}
+    if status_filter not in valid_statuses:
+        status_filter = ""
+    if role_filter not in {"all", "created", "assigned"}:
+        role_filter = "all"
+
+    visible_queryset = Requirement.objects.visible_to(request.user)
+    if status_filter:
+        visible_queryset = visible_queryset.filter(status=status_filter)
+    if role_filter == "created":
+        visible_queryset = visible_queryset.filter(creator=request.user)
+    elif role_filter == "assigned":
+        visible_queryset = visible_queryset.filter(assignee=request.user)
+    if title_query:
+        visible_queryset = visible_queryset.filter(title__icontains=title_query)
+
     visible_requirements = list(
-        Requirement.objects.visible_to(request.user)
+        visible_queryset
         .select_related("creator", "assignee")
         .prefetch_related("criteria", "submissions__review")
     )
@@ -160,6 +208,12 @@ def home(request):
     context = {
         "form": form,
         "criterion_formset": criterion_formset,
+        "status_choices": Requirement.Status.choices,
+        "status_filter": status_filter,
+        "role_filter": role_filter,
+        "title_query": title_query,
+        "filters_active": bool(status_filter or title_query or role_filter != "all"),
+        "has_filtered_requirements": bool(visible_requirements),
         "created_requirements": [
             requirement
             for requirement in visible_requirements
@@ -181,6 +235,53 @@ def requirement_detail(request, pk):
         request,
         "demands/requirement_detail.html",
         _detail_context(requirement, request.user),
+    )
+
+
+@login_required
+@require_POST
+def requirement_edit(request, pk):
+    requirement = _get_requirement(request.user, pk)
+    if requirement.creator_id != request.user.id:
+        raise PermissionDenied("只有需求提出者可以编辑需求。")
+    if requirement.status != Requirement.Status.PENDING:
+        messages.error(request, "需求开始处理后，正文和验收条件不能再修改。")
+        return redirect("demands:requirement_detail", pk=requirement.pk)
+
+    form = RequirementEditForm(request.POST)
+    criterion_formset = CriterionFormSet(request.POST, prefix="edit_criteria")
+    if form.is_valid() and criterion_formset.is_valid():
+        criterion_texts = [
+            criterion_form.cleaned_data["content"]
+            for criterion_form in criterion_formset
+            if criterion_form.cleaned_data
+        ]
+        try:
+            edited = edit_requirement(
+                requirement_id=requirement.pk,
+                actor=request.user,
+                expected_lock_version=form.cleaned_data["lock_version"],
+                title=form.cleaned_data["title"],
+                description=form.cleaned_data["description"],
+                criterion_texts=criterion_texts,
+            )
+        except PermissionDenied:
+            raise
+        except ValidationError as exc:
+            form.add_error(None, "；".join(exc.messages))
+        else:
+            messages.success(request, f"需求“{edited.title}”已更新。")
+            return redirect("demands:requirement_detail", pk=requirement.pk)
+
+    return render(
+        request,
+        "demands/requirement_detail.html",
+        _detail_context(
+            requirement,
+            request.user,
+            edit_form=form,
+            edit_criterion_formset=criterion_formset,
+        ),
     )
 
 

@@ -148,6 +148,16 @@
             background: #b91c1c;
         }
 
+        .button-link {
+            display: inline-block;
+            margin-left: 10px;
+            padding: 8px 14px;
+            border-radius: 5px;
+            background: #e2e8f0;
+            color: #334155;
+            text-decoration: none;
+        }
+
         button:disabled {
             cursor: not-allowed;
             opacity: 0.5;
@@ -269,6 +279,18 @@
         {% block content %}
         {% endblock %}
     </main>
+    <script>
+        document.addEventListener("submit", (event) => {
+            const form = event.target;
+            if (!(form instanceof HTMLFormElement) || !form.checkValidity()) return;
+            const button = form.querySelector('button[type="submit"]');
+            if (!button || button.disabled) return;
+            button.disabled = true;
+            button.dataset.originalText = button.textContent;
+            button.textContent = "处理中…";
+            button.setAttribute("aria-busy", "true");
+        });
+    </script>
     {% block extra_js %}{% endblock %}
 </body>
 </html>

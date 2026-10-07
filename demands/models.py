@@ -122,7 +122,7 @@ class Submission(models.Model):
         verbose_name="所属需求",
     )
     version = models.PositiveIntegerField("提交版本")
-    result_url = models.URLField("成果链接", max_length=1000, blank=True)
+    result_url = models.URLField("成果链接", max_length=1000)
     description = models.TextField("完成说明")
     submitted_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

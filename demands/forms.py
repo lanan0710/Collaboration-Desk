@@ -4,6 +4,7 @@ from django.forms import BaseFormSet, formset_factory
 
 from .attachment_rules import (
     ALLOWED_ATTACHMENT_EXTENSIONS,
+    validate_http_result_url,
     validate_submission_materials,
 )
 from .models import Review
@@ -19,7 +20,7 @@ class UserChoiceField(forms.ModelChoiceField):
         return user.username
 
 
-class RequirementCreateForm(forms.Form):
+class RequirementContentForm(forms.Form):
     title = forms.CharField(
         label="需求标题",
         max_length=200,
@@ -34,6 +35,9 @@ class RequirementCreateForm(forms.Form):
             }
         ),
     )
+
+
+class RequirementCreateForm(RequirementContentForm):
     assignee = UserChoiceField(
         label="负责人",
         queryset=User.objects.none(),
@@ -51,6 +55,19 @@ class RequirementCreateForm(forms.Form):
         if actor and actor.is_authenticated:
             queryset = queryset.exclude(pk=actor.pk)
         self.fields["assignee"].queryset = queryset
+
+
+class RequirementEditForm(RequirementContentForm):
+    lock_version = forms.IntegerField(
+        label="数据版本",
+        min_value=1,
+        widget=forms.HiddenInput(),
+        error_messages={
+            "required": "缺少需求数据版本，请刷新页面后重试。",
+            "invalid": "需求数据版本无效，请刷新页面后重试。",
+            "min_value": "需求数据版本无效，请刷新页面后重试。",
+        },
+    )
 
 
 class CriterionForm(forms.Form):
@@ -114,11 +131,13 @@ class MultipleFileField(forms.FileField):
 
 class SubmissionForm(forms.Form):
     result_url = forms.URLField(
-        label="成果链接（可选）",
-        required=False,
+        label="成果链接",
+        required=True,
         max_length=1000,
+        validators=[validate_http_result_url],
         error_messages={
-            "invalid": "请输入有效的成果链接。",
+            "required": "必须填写成果链接。",
+            "invalid": "请输入有效的 HTTP/HTTPS 成果链接。",
             "max_length": "成果链接不能超过 1000 个字符。",
         },
         widget=forms.URLInput(

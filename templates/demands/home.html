@@ -81,6 +81,42 @@
     </template>
 </section>
 
+<section class="card requirement-filters">
+    <h2>筛选需求</h2>
+    <form method="get">
+        <div class="requirement-columns">
+            <div class="form-row">
+                <label for="filter-status">状态</label>
+                <select id="filter-status" name="status">
+                    <option value="">全部状态</option>
+                    {% for value, label in status_choices %}
+                        <option value="{{ value }}" {% if status_filter == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-row">
+                <label for="filter-role">与我的关系</label>
+                <select id="filter-role" name="role">
+                    <option value="all" {% if role_filter == "all" %}selected{% endif %}>我提出或我负责</option>
+                    <option value="created" {% if role_filter == "created" %}selected{% endif %}>我提出的</option>
+                    <option value="assigned" {% if role_filter == "assigned" %}selected{% endif %}>我负责的</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-row">
+            <label for="filter-title">标题关键词</label>
+            <input id="filter-title" type="search" name="q" value="{{ title_query }}" placeholder="输入需求标题关键词">
+        </div>
+        <button type="submit">应用筛选</button>
+        {% if filters_active %}
+            <a class="button-link" href="{% url 'demands:home' %}">清除筛选</a>
+        {% endif %}
+    </form>
+    {% if filters_active and not has_filtered_requirements %}
+        <p class="muted">没有符合当前筛选条件的需求，请调整条件后重试。</p>
+    {% endif %}
+</section>
+
 <div class="requirement-columns">
     <section class="card">
         <h2>我创建的需求</h2>
@@ -97,7 +133,7 @@
                 </article>
             </a>
         {% empty %}
-            <p class="muted">你还没有创建需求。</p>
+            <p class="muted">{% if filters_active %}没有匹配的我创建的需求。{% else %}你还没有创建需求。{% endif %}</p>
         {% endfor %}
     </section>
 
@@ -116,7 +152,7 @@
                 </article>
             </a>
         {% empty %}
-            <p class="muted">暂时没有分配给你的需求。</p>
+            <p class="muted">{% if filters_active %}没有匹配的我负责的需求。{% else %}暂时没有分配给你的需求。{% endif %}</p>
         {% endfor %}
     </section>
 </div>

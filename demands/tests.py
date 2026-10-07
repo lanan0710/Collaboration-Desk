@@ -344,6 +344,64 @@ class RequirementHomeViewTests(TestCase):
             reverse("demands:requirement_detail", args=[requirement.pk]),
         )
 
+    def test_home_filters_by_status_role_and_title_keyword(self):
+        pending = create_requirement(
+            actor=self.creator,
+            assignee=self.assignee,
+            title="待处理筛选样例",
+            description="不应出现在进行中筛选结果。",
+            criterion_texts=["保持待处理"],
+        )
+        in_progress = create_requirement(
+            actor=self.creator,
+            assignee=self.assignee,
+            title="进行中目标需求",
+            description="应命中组合筛选。",
+            criterion_texts=["已经开始"],
+        )
+        start_requirement(
+            requirement_id=in_progress.pk,
+            actor=self.assignee,
+            expected_lock_version=in_progress.lock_version,
+        )
+        other_creator = get_user_model().objects.create_user(username="other-creator")
+        assigned = create_requirement(
+            actor=other_creator,
+            assignee=self.creator,
+            title="别人提出由我负责",
+            description="仅应出现在我负责筛选。",
+            criterion_texts=["角色筛选正确"],
+        )
+
+        response = self.client.get(
+            reverse("demands:home"),
+            {"status": Requirement.Status.IN_PROGRESS, "role": "created", "q": "目标"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, in_progress.title)
+        self.assertNotContains(response, pending.title)
+        self.assertNotContains(response, assigned.title)
+        self.assertEqual(response.context["status_filter"], Requirement.Status.IN_PROGRESS)
+        self.assertEqual(response.context["role_filter"], "created")
+        self.assertEqual(response.context["title_query"], "目标")
+
+        assigned_response = self.client.get(
+            reverse("demands:home"),
+            {"role": "assigned"},
+        )
+        self.assertContains(assigned_response, assigned.title)
+        self.assertNotContains(assigned_response, pending.title)
+
+    def test_home_filter_empty_result_has_clear_feedback(self):
+        response = self.client.get(
+            reverse("demands:home"),
+            {"status": Requirement.Status.COMPLETED, "q": "不存在的标题"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "没有符合当前筛选条件的需求")
+
 
 class RequirementDetailViewTests(TestCase):
     def setUp(self):
@@ -377,6 +435,85 @@ class RequirementDetailViewTests(TestCase):
         response = self.client.get(self.detail_url())
 
         self.assertEqual(response.status_code, 404)
+
+    def edit_payload(self, **overrides):
+        data = {
+            "title": "修改后的详情页需求",
+            "description": "待处理阶段允许提出者修订说明。",
+            "lock_version": str(self.requirement.lock_version),
+            "edit_criteria-TOTAL_FORMS": "2",
+            "edit_criteria-INITIAL_FORMS": "2",
+            "edit_criteria-MIN_NUM_FORMS": "1",
+            "edit_criteria-MAX_NUM_FORMS": "20",
+            "edit_criteria-0-content": "修改后的第一项",
+            "edit_criteria-1-content": "新增后的第二项",
+        }
+        data.update(overrides)
+        return data
+
+    def test_creator_can_edit_pending_requirement_and_criteria(self):
+        self.client.force_login(self.creator)
+
+        response = self.client.post(
+            reverse("demands:requirement_edit", args=[self.requirement.pk]),
+            self.edit_payload(),
+            follow=True,
+        )
+
+        self.assertRedirects(response, self.detail_url())
+        self.requirement.refresh_from_db()
+        self.assertEqual(self.requirement.title, "修改后的详情页需求")
+        self.assertEqual(
+            list(self.requirement.criteria.values_list("content", flat=True)),
+            ["修改后的第一项", "新增后的第二项"],
+        )
+        self.assertEqual(self.requirement.lock_version, 2)
+        self.assertTrue(self.requirement.logs.filter(action="edit").exists())
+        self.assertContains(response, "已更新")
+
+    def test_non_creator_cannot_edit_and_started_requirement_is_frozen(self):
+        edit_url = reverse("demands:requirement_edit", args=[self.requirement.pk])
+        self.client.force_login(self.assignee)
+        forbidden = self.client.post(edit_url, self.edit_payload())
+        self.assertEqual(forbidden.status_code, 403)
+
+        started = start_requirement(
+            requirement_id=self.requirement.pk,
+            actor=self.assignee,
+            expected_lock_version=self.requirement.lock_version,
+        )
+        self.client.force_login(self.creator)
+        frozen = self.client.post(
+            edit_url,
+            self.edit_payload(lock_version=str(started.lock_version)),
+            follow=True,
+        )
+
+        self.assertRedirects(frozen, self.detail_url())
+        self.assertContains(frozen, "不能再修改")
+        self.requirement.refresh_from_db()
+        self.assertEqual(self.requirement.title, "详情页需求")
+        self.assertEqual(self.requirement.logs.filter(action="edit").count(), 0)
+
+    def test_invalid_edit_keeps_submitted_input(self):
+        self.client.force_login(self.creator)
+        response = self.client.post(
+            reverse("demands:requirement_edit", args=[self.requirement.pk]),
+            self.edit_payload(
+                title="仍需保留的标题",
+                **{
+                    "edit_criteria-TOTAL_FORMS": "1",
+                    "edit_criteria-INITIAL_FORMS": "1",
+                    "edit_criteria-0-content": "",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "仍需保留的标题")
+        self.assertContains(response, "请填写这条验收条件")
+        self.requirement.refresh_from_db()
+        self.assertEqual(self.requirement.title, "详情页需求")
 
     def test_detail_displays_submission_and_each_review_result(self):
         started = start_requirement(

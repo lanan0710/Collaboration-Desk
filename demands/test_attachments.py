@@ -50,7 +50,7 @@ class SubmissionAttachmentTests(TestCase):
 
     def submission_payload(self, **overrides):
         payload = {
-            "result_url": "",
+            "result_url": "https://example.com/attachment-result",
             "description": "提交本轮成果材料。",
             "lock_version": str(self.requirement.lock_version),
             "idempotency_key": str(uuid.uuid4()),
@@ -69,7 +69,7 @@ class SubmissionAttachmentTests(TestCase):
         self.assertEqual(Submission.objects.count(), 0)
         self.assertEqual(SubmissionAttachment.objects.count(), 0)
 
-    def test_attachment_only_post_creates_v1_and_lists_persisted_files(self):
+    def test_link_and_attachments_create_v1_and_list_persisted_files(self):
         response = self.client.post(
             self.submit_url,
             self.submission_payload(
@@ -85,7 +85,10 @@ class SubmissionAttachmentTests(TestCase):
         self.assertEqual(self.requirement.status, Requirement.Status.IN_REVIEW)
         submission = Submission.objects.get(requirement=self.requirement)
         self.assertEqual(submission.version, 1)
-        self.assertEqual(submission.result_url, "")
+        self.assertEqual(
+            submission.result_url,
+            "https://example.com/attachment-result",
+        )
 
         attachments = list(submission.attachments.all())
         self.assertEqual(
@@ -119,11 +122,28 @@ class SubmissionAttachmentTests(TestCase):
         self.assertEqual(submission.result_url, "https://example.com/result-v1")
         self.assertFalse(submission.attachments.exists())
 
-    def test_empty_link_and_attachments_are_rejected_without_state_change(self):
-        response = self.client.post(self.submit_url, self.submission_payload())
+    def test_missing_link_is_rejected_even_when_attachment_is_present(self):
+        response = self.client.post(
+            self.submit_url,
+            self.submission_payload(
+                result_url="",
+                attachments=[self.uploaded_file("evidence.txt")],
+            ),
+        )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "成果链接和附件至少需要提供一项")
+        self.assertContains(response, "必须填写成果链接")
+        self.assert_requirement_unchanged()
+        self.assertEqual(list(Path(self.media_directory.name).rglob("*")), [])
+
+    def test_non_http_result_url_is_rejected(self):
+        response = self.client.post(
+            self.submit_url,
+            self.submission_payload(result_url="ftp://example.com/result"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "HTTP/HTTPS")
         self.assert_requirement_unchanged()
 
     def test_more_than_five_attachments_are_rejected(self):
@@ -163,7 +183,7 @@ class SubmissionAttachmentTests(TestCase):
                 requirement_id=self.requirement.pk,
                 actor=self.assignee,
                 expected_lock_version=self.requirement.lock_version,
-                result_url="",
+                result_url="https://example.com/oversized",
                 description="超大附件不应创建提交。",
                 idempotency_key=uuid.uuid4(),
                 uploaded_files=[oversized_file],
@@ -177,7 +197,7 @@ class SubmissionAttachmentTests(TestCase):
             requirement_id=self.requirement.pk,
             actor=self.assignee,
             expected_lock_version=self.requirement.lock_version,
-            result_url="",
+            result_url="https://example.com/retry",
             description="可安全重试的附件提交。",
             idempotency_key=idempotency_key,
             uploaded_files=[self.uploaded_file("retry.txt", b"same payload")],
@@ -187,7 +207,7 @@ class SubmissionAttachmentTests(TestCase):
             requirement_id=self.requirement.pk,
             actor=self.assignee,
             expected_lock_version=self.requirement.lock_version,
-            result_url="",
+            result_url="https://example.com/retry",
             description="可安全重试的附件提交。",
             idempotency_key=idempotency_key,
             uploaded_files=[self.uploaded_file("retry.txt", b"same payload")],
@@ -207,7 +227,7 @@ class SubmissionAttachmentTests(TestCase):
             requirement_id=self.requirement.pk,
             actor=self.assignee,
             expected_lock_version=self.requirement.lock_version,
-            result_url="",
+            result_url="https://example.com/original",
             description="原始说明。",
             idempotency_key=idempotency_key,
             uploaded_files=[self.uploaded_file("retry.txt", b"same size")],
@@ -218,7 +238,7 @@ class SubmissionAttachmentTests(TestCase):
                 requirement_id=self.requirement.pk,
                 actor=self.assignee,
                 expected_lock_version=self.requirement.lock_version,
-                result_url="",
+                result_url="https://example.com/original",
                 description="不同说明。",
                 idempotency_key=idempotency_key,
                 uploaded_files=[self.uploaded_file("retry.txt", b"same size")],
@@ -233,7 +253,7 @@ class SubmissionAttachmentTests(TestCase):
             requirement_id=self.requirement.pk,
             actor=self.assignee,
             expected_lock_version=self.requirement.lock_version,
-            result_url="",
+            result_url="https://example.com/permission",
             description="受权限保护的幂等请求。",
             idempotency_key=idempotency_key,
             uploaded_files=[self.uploaded_file("permission.txt", b"protected")],
@@ -244,7 +264,7 @@ class SubmissionAttachmentTests(TestCase):
                 requirement_id=self.requirement.pk,
                 actor=self.outsider,
                 expected_lock_version=self.requirement.lock_version,
-                result_url="",
+                result_url="https://example.com/permission",
                 description="受权限保护的幂等请求。",
                 idempotency_key=idempotency_key,
                 uploaded_files=[self.uploaded_file("permission.txt", b"protected")],
@@ -260,7 +280,7 @@ class SubmissionAttachmentTests(TestCase):
                     requirement_id=self.requirement.pk,
                     actor=self.assignee,
                     expected_lock_version=self.requirement.lock_version,
-                    result_url="",
+                    result_url="https://example.com/rollback",
                     description="该事务应完整回滚。",
                     idempotency_key=uuid.uuid4(),
                     uploaded_files=[self.uploaded_file("rollback.txt", b"temporary")],
@@ -277,7 +297,7 @@ class SubmissionAttachmentTests(TestCase):
             requirement_id=self.requirement.pk,
             actor=self.assignee,
             expected_lock_version=self.requirement.lock_version,
-            result_url="",
+            result_url="https://example.com/download",
             description="供相关人员下载。",
             idempotency_key=uuid.uuid4(),
             uploaded_files=[self.uploaded_file("download.txt", b"download body")],
@@ -293,7 +313,10 @@ class SubmissionAttachmentTests(TestCase):
             self.assertIn("download.txt", response.headers["Content-Disposition"])
             self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
             self.assertEqual(b"".join(response.streaming_content), b"download body")
-            response.close()
+            # FileResponse.close() emits request_finished. PostgreSQL closes the
+            # class-level TestCase connection at that point, so defer closing
+            # streaming responses until the entire test class has finished.
+            self.addClassCleanup(response.close)
 
         self.client.force_login(self.outsider)
         self.assertEqual(self.client.get(download_url).status_code, 404)
@@ -307,7 +330,7 @@ class SubmissionAttachmentTests(TestCase):
             requirement_id=self.requirement.pk,
             actor=self.assignee,
             expected_lock_version=self.requirement.lock_version,
-            result_url="",
+            result_url="https://example.com/immutable",
             description="不可变附件。",
             idempotency_key=uuid.uuid4(),
             uploaded_files=[self.uploaded_file("immutable.txt", b"fixed content")],

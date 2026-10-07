@@ -1,6 +1,8 @@
 from pathlib import PurePath
+from urllib.parse import urlsplit
 
 from django.core.exceptions import ValidationError
+from django.core.validators import URLValidator
 
 
 MAX_ATTACHMENT_COUNT = 5
@@ -31,6 +33,8 @@ ALLOWED_ATTACHMENT_EXTENSIONS = {
     ".zip",
 }
 
+HTTP_URL_VALIDATOR = URLValidator(schemes=["http", "https"])
+
 
 def attachment_original_name(uploaded_file):
     name = str(uploaded_file.name).replace("\\", "/").rsplit("/", 1)[-1]
@@ -38,12 +42,25 @@ def attachment_original_name(uploaded_file):
     return (name.strip() or "attachment")[:255]
 
 
+def validate_http_result_url(value):
+    result_url = (value or "").strip()
+    if not result_url:
+        raise ValidationError("必须填写成果链接。")
+
+    try:
+        HTTP_URL_VALIDATOR(result_url)
+    except ValidationError as exc:
+        raise ValidationError("成果链接必须是有效的 HTTP/HTTPS 地址。") from exc
+
+    if urlsplit(result_url).scheme.lower() not in {"http", "https"}:
+        raise ValidationError("成果链接只允许使用 HTTP 或 HTTPS。")
+    return result_url
+
+
 def validate_submission_materials(result_url, uploaded_files):
     files = list(uploaded_files or [])
-    result_url = (result_url or "").strip()
+    result_url = validate_http_result_url(result_url)
 
-    if not result_url and not files:
-        raise ValidationError("成果链接和附件至少需要提供一项。")
     if len(files) > MAX_ATTACHMENT_COUNT:
         raise ValidationError(f"一次最多上传 {MAX_ATTACHMENT_COUNT} 个附件。")
 

@@ -115,6 +115,61 @@
     {% endif %}
 </section>
 
+{% if can_edit %}
+<section class="card edit-requirement">
+    <h2>编辑待处理需求</h2>
+    <p class="muted">负责人开始处理后，需求说明和验收条件将被冻结。</p>
+    <form method="post" action="{% url 'demands:requirement_edit' requirement.pk %}" novalidate>
+        {% csrf_token %}
+        {{ edit_form.non_field_errors }}
+        {{ edit_form.lock_version }}
+        {{ edit_form.lock_version.errors }}
+
+        <div class="form-row">
+            {{ edit_form.title.label_tag }}
+            {{ edit_form.title }}
+            {{ edit_form.title.errors }}
+        </div>
+        <div class="form-row">
+            {{ edit_form.description.label_tag }}
+            {{ edit_form.description }}
+            {{ edit_form.description.errors }}
+        </div>
+
+        <fieldset class="criteria-fieldset">
+            <legend>验收条件</legend>
+            <p class="muted">修改会整体替换当前条件；至少 1 条，最多 20 条。</p>
+            {{ edit_criterion_formset.management_form }}
+            {{ edit_criterion_formset.non_form_errors }}
+            <div id="edit-criterion-form-list">
+                {% for criterion_form in edit_criterion_formset %}
+                    <div class="criterion-row">
+                        <div class="criterion-row-heading">
+                            <strong class="edit-criterion-number">条件 {{ forloop.counter }}</strong>
+                            <button type="button" class="button-danger remove-edit-criterion">删除</button>
+                        </div>
+                        {{ criterion_form.content }}
+                        {{ criterion_form.content.errors }}
+                    </div>
+                {% endfor %}
+            </div>
+            <button type="button" id="add-edit-criterion" class="button-secondary">＋ 添加验收条件</button>
+        </fieldset>
+        <button type="submit">保存需求修改</button>
+    </form>
+
+    <template id="empty-edit-criterion-form">
+        <div class="criterion-row">
+            <div class="criterion-row-heading">
+                <strong class="edit-criterion-number">条件</strong>
+                <button type="button" class="button-danger remove-edit-criterion">删除</button>
+            </div>
+            {{ edit_criterion_formset.empty_form.content }}
+        </div>
+    </template>
+</section>
+{% endif %}
+
 <section class="card requirement-overview">
     <h2>需求说明</h2>
     <div>{{ requirement.description|linebreaksbr }}</div>
@@ -229,4 +284,57 @@
         {% endfor %}
     </ol>
 </section>
+{% endblock %}
+
+{% block extra_js %}
+{% if can_edit %}
+<script>
+(() => {
+    const list = document.getElementById("edit-criterion-form-list");
+    const addButton = document.getElementById("add-edit-criterion");
+    const totalForms = document.getElementById("id_edit_criteria-TOTAL_FORMS");
+    const emptyTemplate = document.getElementById("empty-edit-criterion-form").innerHTML;
+
+    const rows = () => Array.from(list.querySelectorAll(".criterion-row"));
+
+    function updateRows() {
+        rows().forEach((row, index) => {
+            row.querySelector(".edit-criterion-number").textContent = `条件 ${index + 1}`;
+            row.querySelector(".remove-edit-criterion").disabled = rows().length === 1;
+            row.querySelectorAll("[name], [id], [for]").forEach((element) => {
+                ["name", "id", "for"].forEach((attribute) => {
+                    if (!element.hasAttribute(attribute)) return;
+                    element.setAttribute(
+                        attribute,
+                        element.getAttribute(attribute).replace(/edit_criteria-\d+-/g, `edit_criteria-${index}-`),
+                    );
+                });
+            });
+        });
+        totalForms.value = String(rows().length);
+        addButton.disabled = rows().length >= 20;
+    }
+
+    addButton.addEventListener("click", () => {
+        if (rows().length >= 20) return;
+        const index = rows().length;
+        list.insertAdjacentHTML(
+            "beforeend",
+            emptyTemplate.replaceAll("__prefix__", String(index)),
+        );
+        updateRows();
+        rows().at(-1).querySelector("input[type='text']").focus();
+    });
+
+    list.addEventListener("click", (event) => {
+        const button = event.target.closest(".remove-edit-criterion");
+        if (!button || rows().length === 1) return;
+        button.closest(".criterion-row").remove();
+        updateRows();
+    });
+
+    updateRows();
+})();
+</script>
+{% endif %}
 {% endblock %}

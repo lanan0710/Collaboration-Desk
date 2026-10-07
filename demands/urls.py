@@ -17,6 +17,11 @@ urlpatterns = [
         name="requirement_start",
     ),
     path(
+        "requirements/<int:pk>/edit/",
+        views.requirement_edit,
+        name="requirement_edit",
+    ),
+    path(
         "requirements/<int:pk>/submit/",
         views.requirement_submit,
         name="requirement_submit",
