@@ -6,7 +6,9 @@ from django.db import models
 
 
 class RequirementQuerySet(models.QuerySet):
+    #限制无关账号无法访问需求数据
     def visible_to(self, user):
+        #规定提出者不能是负责人
         if not user.is_authenticated:
             return self.none()
         return self.filter(models.Q(creator=user) | models.Q(assignee=user))
@@ -39,7 +41,9 @@ class Requirement(models.Model):
         choices=Status.choices,
         default=Status.PENDING,
     )
+    #防止旧业面覆盖新状态
     lock_version = models.PositiveIntegerField("数据版本", default=1)
+
     created_at = models.DateTimeField("创建时间", auto_now_add=True)
     updated_at = models.DateTimeField("更新时间", auto_now=True)
 
@@ -108,6 +112,7 @@ class Submission(models.Model):
         related_name="requirement_submissions",
         verbose_name="提交人",
     )
+    #保证请求重复时不会重复创建记录
     idempotency_key = models.UUIDField(
         "幂等请求标识",
         default=uuid.uuid4,
@@ -159,6 +164,7 @@ class Review(models.Model):
         RETURNED = "returned", "退回"
         APPROVED = "approved", "通过"
 
+#限制一个提交只能有一次审核
     submission = models.OneToOneField(
         Submission,
         on_delete=models.PROTECT,
